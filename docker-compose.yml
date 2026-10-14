@@ -1,0 +1,78 @@
+services:
+  # ── PostgreSQL (internal network only – no host port) ───────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: api_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-appdb}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - api_network
+
+  # ── Redis (internal network only – no host port) ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: api_redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - api_network
+
+  # ── Application ──────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      target: production
+    container_name: api_app
+    restart: unless-stopped
+    # Everything the app needs is set here (with defaults), so `docker-compose
+    # up --build` works with or without a .env file. Values in .env are used
+    # for ${...} interpolation only.
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-appdb}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_COMMAND_TIMEOUT_MS: ${REDIS_COMMAND_TIMEOUT_MS:-500}
+      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-120}
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - api_network
+    # Healthcheck is inherited from the Dockerfile HEALTHCHECK
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  api_network:
+    driver: bridge
